@@ -1,0 +1,47 @@
+spring:
+  application:
+    name: flightpulse
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:flightpulse}
+    username: ${DB_USER:flightpulse}
+    password: ${DB_PASSWORD:flightpulse}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    show-sql: false
+  flyway:
+    enabled: true
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+  api-docs:
+    path: /v3/api-docs
+
+# flightpulse-specific config; the optional real ingestion adapter stays disabled by default
+flightpulse:
+  ingestion:
+    real-adapter:
+      enabled: ${INGESTION_REAL_ADAPTER_ENABLED:false}
+      provider: ${INGESTION_REAL_ADAPTER_PROVIDER:aviationstack}
+      api-key: ${INGESTION_REAL_ADAPTER_API_KEY:}
