@@ -71,6 +71,13 @@ export JAVA_HOME=/path/to/jdk-25
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=local   # run against the compose services
 ```
 
+When running the app from an IDE (or `spring-boot:run`), start the backing services first —
+they must be up before the app boots:
+
+```bash
+./scripts/infra.sh up     # start postgres + kafka + redis (up|down|stop|logs|status)
+```
+
 ## Key design decisions
 
 - **Mock-first ingestion** behind a `SourceAdapter` interface, so the system is fully runnable
