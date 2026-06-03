@@ -1,0 +1,54 @@
+{
+  "info": {
+    "name": "FlightPulse",
+    "description": "REST endpoints for the FlightPulse backend. Endpoint folders are populated as features land (subscriptions in F7, deals query in F10).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health & Docs",
+      "item": [
+        {
+          "name": "Actuator health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/actuator/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["actuator", "health"]
+            }
+          }
+        },
+        {
+          "name": "OpenAPI spec",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v3/api-docs",
+              "host": ["{{baseUrl}}"],
+              "path": ["v3", "api-docs"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Subscriptions",
+      "description": "Populated in F7 — create, list, delete user subscriptions.",
+      "item": []
+    },
+    {
+      "name": "Deals",
+      "description": "Populated in F10 — query deals with filters.",
+      "item": []
+    }
+  ]
+}
