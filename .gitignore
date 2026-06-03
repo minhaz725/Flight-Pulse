@@ -1,0 +1,33 @@
+# maven
+target/
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+# ide
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.project
+.classpath
+.factorypath
+
+# os
+.DS_Store
+Thumbs.db
+
+# logs
+*.log
+
+# local env and secrets
+.env
+*-local-secrets.yml
+application-local-secrets.yml
+
+# build output
+build/
+out/
+bin/
