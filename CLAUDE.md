@@ -148,7 +148,14 @@ Build features in this order. Each feature gets its own branch. Mark a feature d
   Spring Boot 4.x + Java 25 setup, package structure, Docker Compose with Postgres + Kafka + Redis, Flyway baseline, Actuator, Springdoc, GitHub Actions CI skeleton. Branch: `feature/project-bootstrap`.
 
 - [x] **F2 — Domain model and persistence**
-  `Deal` entity with status enum (INGESTED, SCORED, PUBLISHED, EXPIRED), `UserSubscription` entity (including a `preferredChannel` field — enum LOG, TELEGRAM, EMAIL, SMS; default LOG — used by F9 routing), repositories, Flyway migrations. Branch: `feature/domain-model`.
+  `Deal` entity with status enum (INGESTED, SCORED, PUBLISHED, EXPIRED). `UserSubscription` entity with:
+  - `preferredChannel` — enum LOG, TELEGRAM, EMAIL, SMS; default LOG (F9 routing)
+  - `travelDateFrom` / `travelDateTo` — inclusive travel window; a fixed date is just from == to
+  - `alertType` — enum THRESHOLD, NEW_LOW, SCORE (drives matching logic in F8)
+  - `status` — enum ACTIVE, EXPIRED (replaces the simple `active` boolean; housekeeping transitions this)
+  - `bestPriceSeen` — nullable; updated by the matcher each time a NEW_LOW fires
+  - `destination` and `maxPrice` are optional (route-only and score-only subscriptions are valid)
+  `PriceHistory` entity: records observed prices per route (origin, destination, price, currency, observedAt) for the scorer's rolling-median baseline. Repositories, Flyway migrations (V2 creates deal + user_subscription; V3 adds price_history and the subscription additions). Branch: `feature/domain-model`.
 
 - [ ] **F3 — Ingestion layer**
   Source adapter interface with multiple implementations. Primary adapters are mocked feeds emitting realistic deals in deliberately different formats (one XML, one JSON, different field names) so the normalisation layer has real work. One optional real adapter (Aviationstack free tier or Travelpayouts) behind a config flag, demonstrating live integration with auth, rate limits, and error handling. The project must run fully on mocks alone if the real adapter is disabled or the API is unavailable. No Amadeus self-service; no Google Flights API or scraper. Branch: `feature/ingestion-layer`.
@@ -157,16 +164,62 @@ Build features in this order. Each feature gets its own branch. Mark a feature d
   Validate deals: future travel date, valid airport codes, sane price and currency. Reject or flag invalid deals. Branch: `feature/deal-validation`.
 
 - [ ] **F5 — Scoring service**
-  Score deal quality based on discount percentage and route popularity. Move status INGESTED -> SCORED. Branch: `feature/scoring-service`.
+  Score each deal 0–100 from three signals, then move status INGESTED → SCORED.
+
+  **Signals and blend (all weights configurable in `application.yml`):**
+  - `priceVsHistory` (default weight 0.60): how far below the route's rolling median the deal price is, normalised to 0–100. Computed from the PriceHistory table (F2).
+  - `statedDiscount` (default weight 0.25): the deal's own `discountPercentage` field when the source provides it, normalised to 0–100. Zero if absent.
+  - `routePopularity` (default weight 0.15): number of ACTIVE subscriptions watching that route, normalised against a configurable ceiling (e.g. 50 subs = 100 points).
+
+  `score = weight_pvh * priceVsHistory + weight_sd * statedDiscount + weight_rp * routePopularity`, clamped to [0, 100].
+
+  **Cold-start rule**: if a route has fewer than a configurable minimum number of historical observations (e.g. 5), `priceVsHistory` is treated as 0 and the deal is flagged `lowConfidence = true`. Do not fabricate a baseline. Log a WARN when scoring in cold-start mode.
+
+  After scoring, append the observed price to PriceHistory so future deals on the same route have more data. Branch: `feature/scoring-service`.
 
 - [ ] **F6 — Kafka publishing**
   Publish `deal.published` events when a deal reaches PUBLISHED. Producer config, event payloads. Branch: `feature/kafka-publishing`.
 
 - [ ] **F7 — Subscription API**
-  REST endpoints to create, list, and delete user subscriptions. DTOs, validation, Swagger, Postman entries. Branch: `feature/subscription-api`.
+  REST endpoints to create, list, and delete user subscriptions. DTOs, validation, Swagger, Postman entries.
+
+  **Request fields (POST /api/subscriptions):**
+  - `userId` (required)
+  - `origin` (required; 3-letter IATA code)
+  - `destination` (optional; omit for "any destination from origin")
+  - `travelDateFrom` / `travelDateTo` (both required; ISO date; from == to for a fixed date)
+  - `alertType` (required; THRESHOLD | NEW_LOW | SCORE)
+  - `maxPrice` (required when alertType is THRESHOLD; optional otherwise)
+  - `minScore` (required when alertType is SCORE; optional otherwise)
+  - `preferredChannel` (optional; default LOG)
+
+  **Lifecycle fields (managed by the system, not user-settable):**
+  `status` starts ACTIVE. `bestPriceSeen` is null until the first match.
+
+  Validate that `travelDateFrom` is not in the past and `travelDateTo >= travelDateFrom`. Return 400 with a clear message on constraint violations. Branch: `feature/subscription-api`.
 
 - [ ] **F8 — Subscription matching**
-  Consume `deal.published`, match against subscriptions, fire `alert.triggered` events. Dead-letter handling for failures. Branch: `feature/subscription-matching`.
+  Consume `deal.published`, match against ACTIVE subscriptions, fire `alert.triggered` events. Dead-letter handling for failures.
+
+  **Match criteria (all must hold):**
+  1. Subscription origin == deal origin.
+  2. Subscription destination matches deal destination (or subscription destination is null = any).
+  3. Deal `departureDate` falls within subscription `travelDateFrom`..`travelDateTo` (inclusive).
+
+  **Alert type evaluation (after route/window match):**
+  - `THRESHOLD`: fire if deal price <= subscription maxPrice.
+  - `NEW_LOW`: fire if deal price < subscription bestPriceSeen (or bestPriceSeen is null — the first match always fires). After firing, update bestPriceSeen to the deal price.
+  - `SCORE`: fire if deal score >= subscription minScore.
+
+  **Framing**: the system promises "best seen so far on this watch", never "lowest possible". Comments and README must reflect this.
+
+  **Acceptance examples (verified in tests):**
+  - THRESHOLD subscription maxPrice=900, deal price=850, date in window → alert fires.
+  - NEW_LOW subscription: deal at 1100 fires (first), deal at 1040 fires (new low), deal at 930 fires (new low), deal at 960 does NOT fire.
+  - Deal outside the travel window → no alert regardless of price or score.
+  - Deal inside window but price above maxPrice on THRESHOLD subscription → no alert.
+
+  Branch: `feature/subscription-matching`.
 
 - [ ] **F9 — Notification stub**
   `NotificationChannel` interface in the `messaging` package. Implementations: `LogChannel` (default, always available, logs the intended message), `TelegramChannel` (bot token), `EmailChannel` (SMTP/transactional email), `SmsChannel` (Twilio, optional, behind a config flag, disabled by default). A user subscription specifies its preferred channel. The notification stub consumes `alert.triggered` events and routes to the chosen channel, falling back to `LogChannel` if that channel is unavailable. Every channel must degrade gracefully so the project runs end to end with no external credentials. Retry logic + dead-letter queue. Branch: `feature/notification-stub`.
@@ -178,7 +231,19 @@ Build features in this order. Each feature gets its own branch. Mark a feature d
   `@Scheduled` job that triggers ingestion every X minutes. Configurable interval. Branch: `feature/polling-job`.
 
 - [ ] **F12 — Housekeeping job**
-  Expire old deals (status -> EXPIRED), purge stale data, daily summary log. Branch: `feature/housekeeping-job`.
+  Daily scheduled job (configurable interval) that handles expiry and cleanup.
+
+  **Deal expiry**: move deals with `departureDate` in the past to status EXPIRED.
+
+  **Subscription expiry**: transition ACTIVE subscriptions to EXPIRED once their `travelDateFrom` has passed. On expiry, fire one final `alert.triggered` event carrying:
+  - `bestPriceSeen` — the lowest price seen during the watch lifetime (if any match fired).
+  - or a "no match" summary if `bestPriceSeen` is still null (the watch ended with no qualifying deal found).
+
+  **Purge**: delete EXPIRED deals older than a configurable retention window (e.g. 30 days). Delete EXPIRED subscriptions older than a configurable retention window.
+
+  **Daily summary log**: emit a single INFO log line summarising how many deals were expired, how many subscriptions were expired, how many records were purged.
+
+  All retention windows and intervals configurable via `application.yml`. Branch: `feature/housekeeping-job`.
 
 - [ ] **F13 — Spring Batch bulk ingestion**
   Batch job for bulk deal ingestion runs with chunked processing. Branch: `feature/batch-ingestion`.

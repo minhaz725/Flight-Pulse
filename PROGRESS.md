@@ -37,16 +37,42 @@ Postgres/Kafka/Redis, runs Flyway, exposes Actuator + Swagger.
 
 ---
 
-## Notes for F2 — Domain model & persistence (next)
+## F2 — Domain model & persistence ✅ (merged to `main`)
 
-Branch: `feature/domain-model`. Scope in `CLAUDE.md` §9.
+Branch `feature/domain-model`, merged via `--no-ff`. Later amended on
+`feature/domain-model-v2` (after spec expansion) to add `PriceHistory`,
+`AlertType`/`SubscriptionStatus` enums, and richer `UserSubscription` fields.
 
-- `Deal` entity + status enum `INGESTED → SCORED → PUBLISHED → EXPIRED`.
-- `UserSubscription` entity — **must include `preferredChannel`** (enum `LOG, TELEGRAM, EMAIL, SMS`, default `LOG`); F9 routing depends on it.
-- Spring Data JPA repositories.
-- Flyway migration `V2__...sql` creates the real tables. `pgcrypto` is already enabled (use `gen_random_uuid()` if UUID PKs are wanted). Keep `ddl-auto: validate` — entities must match the migration exactly.
-- Add a Testcontainers slice or reuse the existing pattern for repository tests.
-- Remember per `CLAUDE.md` §6: constructor injection, records for DTOs, few lowercase single-line comments, named constants, no God classes.
+### What's in place
+- **Enums**: `DealStatus` (INGESTED, SCORED, PUBLISHED, EXPIRED), `PreferredChannel` (LOG, TELEGRAM, EMAIL, SMS), `AlertType` (THRESHOLD, NEW_LOW, SCORE), `SubscriptionStatus` (ACTIVE, EXPIRED).
+- **`Deal`** entity: origin, destination, airline, price, currency, departure/return dates, `discountPercentage`, `score`, `status`, `sourceAdapter`, `externalId`, JPA-managed `createdAt`/`updatedAt`. `setScore()` and `setStatus()` are the only mutators (scoring and publishing own the transitions).
+- **`UserSubscription`** entity: `userId`, optional `origin`/`destination`, `travelDateFrom`/`travelDateTo` (inclusive window), `alertType`, `maxPrice` (THRESHOLD), `minScore` (SCORE), `preferredChannel`, `status` (ACTIVE/EXPIRED), `bestPriceSeen` (updated by matcher on NEW_LOW), `createdAt`. `deactivate()` → EXPIRED transition; `updateBestPrice()` persists a new low.
+- **`PriceHistory`** entity: per-route price observation (origin, destination, price, currency, observedAt). Written by the scorer after each deal is scored; read to compute the rolling-median baseline.
+- **Repositories**: `DealRepository` (findByStatus, findByOriginAndDestination, dedup check), `UserSubscriptionRepository` (findByStatus, findByUserId), `PriceHistoryRepository` (findByOriginAndDestinationOrderByObservedAtDesc for scorer).
+- **Flyway migrations**: V2 creates `deal` + `user_subscription`; V3 adds `price_history` and the new subscription columns.
+- **Tests**: 10 Testcontainers-backed repository tests — all green.
 
-### Workflow reminder
-Feature-by-feature with checkpoints: build one feature fully (code + tests + Swagger + Postman where applicable), then stop for review before the next. Git remote to be added later by the user.
+### Key decisions
+- `active: boolean` replaced by `status: SubscriptionStatus` to support the housekeeping expiry flow (F12) and the subscription lifecycle spec without an extra column.
+- `bestPriceSeen` lives on the subscription (not a separate table) — the matcher updates it atomically with the alert-fired event; this is enough for "best seen so far" semantics without a query join.
+- `PriceHistory` is append-only; no update path. The scorer queries the most recent N rows for a route and computes the median in Java — avoids a complex window-function query while keeping the service testable.
+- Cold-start (< configurable min observations) is a first-class concept: scorer sets `score = 0` and logs WARN rather than fabricating a baseline. Documented in F5 scope.
+
+### Gotchas
+- `char(3)` in PostgreSQL maps to `bpchar`, which fails Hibernate's schema validation against `varchar(3)`. Use `varchar(3)` in migrations for all fixed-length codes.
+- `@SpringBootTest` tests share the application context — `contains()` on entities uses reference equality. Use `.anyMatch(s -> s.getId().equals(...))` instead.
+- `PostgreSQLContainer` in Testcontainers 2.x is a raw (non-generic) class; use without type parameter.
+
+---
+
+## Notes for F3 — Ingestion layer (next)
+
+Branch: `feature/ingestion-layer`. Scope in `CLAUDE.md` §9.
+
+- `SourceAdapter` interface: single method `List<Deal> fetchDeals()`.
+- Two mock adapters: `MockJsonAdapter` (JSON format, one field-name set) and `MockXmlAdapter` (XML, deliberately different field names) — both emit realistic static/semi-random deals so the normalisation layer has real work.
+- One optional real adapter behind `flightpulse.ingestion.real-adapter.enabled` — if disabled or the API call fails, fall through gracefully; mocks continue.
+- Normalisation service maps each adapter's raw payload into the `Deal` domain entity and saves via `DealRepository`. Check `existsByExternalIdAndSourceAdapter` to skip duplicates.
+- After saving, each new deal is at status INGESTED — it flows into validation (F4) and scoring (F5) from there.
+- No `@Scheduled` here — the job that calls the adapters lives in F11. For F3, wire a `IngestionService.ingestAll()` that iterates enabled adapters and normalises; it can be called from a simple `@Component` `CommandLineRunner` for manual testing if useful.
+- Unit tests: mock the adapter output, assert the normalised `Deal` fields and dedup behaviour.
