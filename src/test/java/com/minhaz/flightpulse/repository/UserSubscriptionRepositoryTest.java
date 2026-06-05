@@ -1,12 +1,15 @@
 package com.minhaz.flightpulse.repository;
 
+import com.minhaz.flightpulse.model.AlertType;
 import com.minhaz.flightpulse.model.PreferredChannel;
+import com.minhaz.flightpulse.model.SubscriptionStatus;
 import com.minhaz.flightpulse.model.UserSubscription;
 import java.math.BigDecimal;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -61,35 +64,40 @@ class UserSubscriptionRepositoryTest {
     @Autowired
     private UserSubscriptionRepository subscriptionRepository;
 
+    private static final LocalDate FUTURE_FROM = LocalDate.now().plusDays(30);
+    private static final LocalDate FUTURE_TO = LocalDate.now().plusDays(60);
+
     @Test
     void savesSubscriptionWithDefaultChannel() {
         UserSubscription sub = new UserSubscription("user-1", "LHR", "JFK",
-                BigDecimal.valueOf(500), 70, null);
+                FUTURE_FROM, FUTURE_TO, AlertType.THRESHOLD, BigDecimal.valueOf(500), null, null);
 
         UserSubscription saved = subscriptionRepository.save(sub);
 
         assertThat(saved.getId()).isNotNull();
         assertThat(saved.getPreferredChannel()).isEqualTo(PreferredChannel.LOG);
-        assertThat(saved.isActive()).isTrue();
+        assertThat(saved.getStatus()).isEqualTo(SubscriptionStatus.ACTIVE);
         assertThat(saved.getCreatedAt()).isNotNull();
+        assertThat(saved.getBestPriceSeen()).isNull();
     }
 
     @Test
     void savesSubscriptionWithTelegramChannel() {
         UserSubscription sub = new UserSubscription("user-2", null, "DXB",
-                BigDecimal.valueOf(350), null, PreferredChannel.TELEGRAM);
+                FUTURE_FROM, FUTURE_TO, AlertType.NEW_LOW, null, null, PreferredChannel.TELEGRAM);
 
         UserSubscription saved = subscriptionRepository.save(sub);
 
         assertThat(saved.getPreferredChannel()).isEqualTo(PreferredChannel.TELEGRAM);
+        assertThat(saved.getAlertType()).isEqualTo(AlertType.NEW_LOW);
     }
 
     @Test
     void findsByUserId() {
         subscriptionRepository.save(new UserSubscription("user-find-test", "AMS", "BKK",
-                BigDecimal.valueOf(400), 60, PreferredChannel.EMAIL));
+                FUTURE_FROM, FUTURE_TO, AlertType.THRESHOLD, BigDecimal.valueOf(400), null, PreferredChannel.EMAIL));
         subscriptionRepository.save(new UserSubscription("user-find-test", "LHR", null,
-                null, null, PreferredChannel.LOG));
+                FUTURE_FROM, FUTURE_TO, AlertType.SCORE, null, 70, PreferredChannel.LOG));
 
         List<UserSubscription> subs = subscriptionRepository.findByUserId("user-find-test");
 
@@ -99,15 +107,29 @@ class UserSubscriptionRepositoryTest {
     @Test
     void findsOnlyActiveSubscriptions() {
         UserSubscription active = subscriptionRepository.save(new UserSubscription(
-                "user-active-test", "SIN", "SYD", null, null, PreferredChannel.LOG));
-        UserSubscription inactive = subscriptionRepository.save(new UserSubscription(
-                "user-active-test", "CDG", "JFK", null, null, PreferredChannel.LOG));
-        inactive.deactivate();
-        subscriptionRepository.save(inactive);
+                "user-active-test", "SIN", "SYD", FUTURE_FROM, FUTURE_TO,
+                AlertType.NEW_LOW, null, null, PreferredChannel.LOG));
+        UserSubscription expired = subscriptionRepository.save(new UserSubscription(
+                "user-active-test", "CDG", "JFK", FUTURE_FROM, FUTURE_TO,
+                AlertType.THRESHOLD, BigDecimal.valueOf(600), null, PreferredChannel.LOG));
+        expired.expire();
+        subscriptionRepository.save(expired);
 
-        List<UserSubscription> activeSubs = subscriptionRepository.findByActiveTrue();
+        List<UserSubscription> activeSubs = subscriptionRepository.findByStatus(SubscriptionStatus.ACTIVE);
 
         assertThat(activeSubs).anyMatch(s -> s.getId().equals(active.getId()));
-        assertThat(activeSubs).noneMatch(s -> s.getId().equals(inactive.getId()));
+        assertThat(activeSubs).noneMatch(s -> s.getId().equals(expired.getId()));
+    }
+
+    @Test
+    void updatesBestPriceSeen() {
+        UserSubscription sub = subscriptionRepository.save(new UserSubscription(
+                "user-newlow-test", "LHR", "JFK", FUTURE_FROM, FUTURE_TO,
+                AlertType.NEW_LOW, null, null, PreferredChannel.LOG));
+
+        sub.updateBestPrice(BigDecimal.valueOf(850));
+        UserSubscription updated = subscriptionRepository.save(sub);
+
+        assertThat(updated.getBestPriceSeen()).isEqualByComparingTo("850");
     }
 }
