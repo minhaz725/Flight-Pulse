@@ -147,7 +147,7 @@ Build features in this order. Each feature gets its own branch. Mark a feature d
 - [x] **F1 — Project bootstrap**
   Spring Boot 4.x + Java 25 setup, package structure, Docker Compose with Postgres + Kafka + Redis, Flyway baseline, Actuator, Springdoc, GitHub Actions CI skeleton. Branch: `feature/project-bootstrap`.
 
-- [ ] **F2 — Domain model and persistence**
+- [x] **F2 — Domain model and persistence**
   `Deal` entity with status enum (INGESTED, SCORED, PUBLISHED, EXPIRED), `UserSubscription` entity (including a `preferredChannel` field — enum LOG, TELEGRAM, EMAIL, SMS; default LOG — used by F9 routing), repositories, Flyway migrations. Branch: `feature/domain-model`.
 
 - [ ] **F3 — Ingestion layer**
@@ -203,4 +203,4 @@ The project is COMPLETE only when every feature F1 through F17 is checked off, a
 
 Until then, keep this status line current:
 
-**STATUS: IN PROGRESS — F1 (project bootstrap) complete**
+**STATUS: IN PROGRESS — F2 (domain model and persistence) complete**
