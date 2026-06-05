@@ -11,6 +11,7 @@ import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.UUID;
 
 @Entity
@@ -32,6 +33,16 @@ public class UserSubscription {
     @Column(name = "destination", length = 3)
     private String destination;
 
+    @Column(name = "travel_date_from", nullable = false)
+    private LocalDate travelDateFrom;
+
+    @Column(name = "travel_date_to", nullable = false)
+    private LocalDate travelDateTo;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "alert_type", nullable = false, length = 20)
+    private AlertType alertType;
+
     @Column(name = "max_price", precision = 10, scale = 2)
     private BigDecimal maxPrice;
 
@@ -42,8 +53,13 @@ public class UserSubscription {
     @Column(name = "preferred_channel", nullable = false, length = 20)
     private PreferredChannel preferredChannel;
 
-    @Column(name = "active", nullable = false)
-    private boolean active;
+    @Enumerated(EnumType.STRING)
+    @Column(name = "subscription_status", nullable = false, length = 20)
+    private SubscriptionStatus status;
+
+    // updated by the matcher each time a NEW_LOW alert fires
+    @Column(name = "best_price_seen", precision = 10, scale = 2)
+    private BigDecimal bestPriceSeen;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
@@ -56,25 +72,40 @@ public class UserSubscription {
     protected UserSubscription() {}
 
     public UserSubscription(String userId, String origin, String destination,
-                            BigDecimal maxPrice, Integer minScore, PreferredChannel preferredChannel) {
+                            LocalDate travelDateFrom, LocalDate travelDateTo,
+                            AlertType alertType, BigDecimal maxPrice, Integer minScore,
+                            PreferredChannel preferredChannel) {
         this.userId = userId;
         this.origin = origin;
         this.destination = destination;
+        this.travelDateFrom = travelDateFrom;
+        this.travelDateTo = travelDateTo;
+        this.alertType = alertType;
         this.maxPrice = maxPrice;
         this.minScore = minScore;
         this.preferredChannel = preferredChannel != null ? preferredChannel : PreferredChannel.LOG;
-        this.active = true;
+        this.status = SubscriptionStatus.ACTIVE;
     }
 
     public UUID getId() { return id; }
     public String getUserId() { return userId; }
     public String getOrigin() { return origin; }
     public String getDestination() { return destination; }
+    public LocalDate getTravelDateFrom() { return travelDateFrom; }
+    public LocalDate getTravelDateTo() { return travelDateTo; }
+    public AlertType getAlertType() { return alertType; }
     public BigDecimal getMaxPrice() { return maxPrice; }
     public Integer getMinScore() { return minScore; }
     public PreferredChannel getPreferredChannel() { return preferredChannel; }
-    public boolean isActive() { return active; }
+    public SubscriptionStatus getStatus() { return status; }
+    public BigDecimal getBestPriceSeen() { return bestPriceSeen; }
     public Instant getCreatedAt() { return createdAt; }
 
-    public void deactivate() { this.active = false; }
+    public void expire() {
+        this.status = SubscriptionStatus.EXPIRED;
+    }
+
+    public void updateBestPrice(BigDecimal price) {
+        this.bestPriceSeen = price;
+    }
 }

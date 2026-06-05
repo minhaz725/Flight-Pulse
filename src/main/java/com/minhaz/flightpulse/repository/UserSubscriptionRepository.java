@@ -1,5 +1,6 @@
 package com.minhaz.flightpulse.repository;
 
+import com.minhaz.flightpulse.model.SubscriptionStatus;
 import com.minhaz.flightpulse.model.UserSubscription;
 import java.util.List;
 import java.util.UUID;
@@ -9,5 +10,5 @@ public interface UserSubscriptionRepository extends JpaRepository<UserSubscripti
 
     List<UserSubscription> findByUserId(String userId);
 
-    List<UserSubscription> findByActiveTrue();
+    List<UserSubscription> findByStatus(SubscriptionStatus status);
 }
